@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>4913d381-ab2f-4a5d-a7c9-22eb3b237117</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.6" />
+    <PackageReference Include="OllamaSharp" Version="5.4.25" />
+    <PackageReference Include="Scalar.AspNetCore" Version="2.14.1" />
+  </ItemGroup>
+
+</Project>

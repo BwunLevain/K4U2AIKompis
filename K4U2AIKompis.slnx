@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="ContentAPI/ContentAPI.csproj" />
+  <Project Path="ProxyAPI/ProxyAPI.csproj" Id="aa2224f6-00b0-4aac-bee6-07aa26214a9c" />
+</Solution>
