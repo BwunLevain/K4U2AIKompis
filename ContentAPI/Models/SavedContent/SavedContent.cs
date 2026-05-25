@@ -6,6 +6,9 @@
         public string Title { get; set; } = string.Empty;
         public string Prompt { get; set; } = string.Empty;
         public string Content { get; set; } = string.Empty;
+        public string Headline { get; set; } = string.Empty;
+        public string[] Paragraphs { get; set; } = Array.Empty<string>();
+        public bool UncertaintyFlag { get; set; }
         public string Tone { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }

@@ -85,3 +85,15 @@ To access protected endpoints:
 * HybridCache: Implements the new .NET 9 cache system to handle L1/L2 caching and prevents cache stampede.
 * Scalar API Docs: Interactive documentation available at https://localhost:7076/scalar.
 * Optimized UI Experience: Cache invalidation occurs immediately upon update to ensure the user sees changes without AI-latency delays.
+
+## Service-to-Service API key
+
+Set a shared service key used by ContentAPI when calling ProxyAPI to authenticate the request:
+
+dotnet user-secrets set "Service:ApiKey" "<shared-key>" --project ContentAPI
+dotnet user-secrets set "Service:ApiKey" "<shared-key>" --project ProxyAPI
+
+Set JWT keys for ContentAPI:
+dotnet user-secrets set "Jwt:Key" "<jwt-key>" --project ContentAPI
+dotnet user-secrets set "Jwt:Issuer" "local" --project ContentAPI
+dotnet user-secrets set "Jwt:Audience" "local" --project ContentAPI

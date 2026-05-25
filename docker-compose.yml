@@ -1,0 +1,20 @@
+version: '3.8'
+services:
+  contentapi:
+    build:
+      context: .
+      dockerfile: ContentAPI/Dockerfile
+    ports:
+      - "7076:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      # Do NOT store secrets in the repository. Set environment variables in your shell or CI.
+  proxyapi:
+    build:
+      context: .
+      dockerfile: ProxyAPI/Dockerfile
+    ports:
+      - "7002:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      # Do NOT store secrets in the repository. Set environment variables in your shell or CI.

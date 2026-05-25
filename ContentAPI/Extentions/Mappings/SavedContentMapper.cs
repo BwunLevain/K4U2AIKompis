@@ -1,7 +1,7 @@
 ﻿using ContentAPI.Models.SavedContent;
 using ContentAPI.Models.SavedContent.DTOs;
 
-namespace ContentAPI.Extentions.Mappings
+namespace ContentAPI.Extensions.Mappings
 {
     public static class SavedContentMapper
     {
@@ -12,6 +12,9 @@ namespace ContentAPI.Extentions.Mappings
                 savedContent.Title,
                 savedContent.Prompt,
                 savedContent.Content,
+                savedContent.Headline,
+                savedContent.Paragraphs,
+                savedContent.UncertaintyFlag,
                 savedContent.Tone,
                 savedContent.CreatedAt,
                 savedContent.UpdatedAt
@@ -25,6 +28,9 @@ namespace ContentAPI.Extentions.Mappings
                 Title = request.Title,
                 Prompt = request.Prompt,
                 Content = string.Empty,
+                Headline = string.Empty,
+                Paragraphs = Array.Empty<string>(),
+                UncertaintyFlag = false,
                 Tone = request.Tone,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow

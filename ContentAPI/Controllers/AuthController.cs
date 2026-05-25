@@ -1,53 +1,51 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
-using ProductAPI.Models.Auth;
+using ContentAPI.Models.Auth;
 using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 
-/// <summary>
-/// Hanterar autentisering och utfärdande av säkerhetstoken (JWT).
-/// </summary>
-[ApiController]
-[Route("api/[controller]")]
-public class AuthController : ControllerBase
+namespace ContentAPI.Controllers
 {
-    private readonly IConfiguration _config;
-
-    /// <summary>
-    /// Initierar en ny instans av <see cref="AuthController"/>.
-    /// </summary>
-    /// <param name="config">Applikationens konfiguration för att hämta JWT-inställningar.</param>
-    public AuthController(IConfiguration config)
+    [ApiController]
+    [Route("api/[controller]")]
+    public class AuthController : ControllerBase
     {
-        _config = config;
-    }
+        private readonly IConfiguration _config;
 
-    /// <summary>
-    /// Verifierar användaruppgifter och genererar en JWT-token.
-    /// </summary>
-    /// <param name="request">Objekt som innehåller användarnamn och lösenord.</param>
-    /// <returns>En giltig Bearer-token vid lyckad inloggning.</returns>
-    /// <response code="200">Inloggningen lyckades och en token har skapats.</response>
-    /// <response code="401">Felaktigt användarnamn eller lösenord.</response>
-    [HttpPost("login")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public IActionResult Login([FromBody] LoginRequest request)
-    {
-        if (request.Username != "admin" || request.Password != "password123")
+        public AuthController(IConfiguration config)
         {
-            return Unauthorized("Felaktigt användarnamn eller lösenord.");
+            _config = config;
         }
 
-        var securityKey = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
-        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+        [HttpPost("login")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public IActionResult Login([FromBody] LoginRequest request)
+        {
+            if (request.Username != "admin" || request.Password != "password123")
+            {
+                return Unauthorized("Felaktigt användarnamn eller lösenord.");
+            }
 
-        var token = new JwtSecurityToken(
-            issuer: _config["Jwt:Issuer"],
-            audience: _config["Jwt:Audience"],
-            expires: DateTime.Now.AddHours(1),
-            signingCredentials: credentials);
+            var authClaims = new[]
+            {
+                new Claim(ClaimTypes.Name, request.Username),
+                new Claim(ClaimTypes.Role, "Admin")
+            };
 
-        var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
-        return Ok(new { Token = tokenString });
+            var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
+            var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+
+            var token = new JwtSecurityToken(
+                issuer: _config["Jwt:Issuer"],
+                audience: _config["Jwt:Audience"],
+                claims: authClaims,
+                expires: DateTime.Now.AddHours(1),
+                signingCredentials: credentials);
+
+            var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
+            return Ok(new { Token = tokenString });
+        }
     }
 }

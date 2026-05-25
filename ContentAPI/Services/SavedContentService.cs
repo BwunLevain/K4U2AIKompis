@@ -1,64 +1,149 @@
 ﻿using ContentAPI.Exceptions;
 using ContentAPI.Extensions;
-using ContentAPI.Extentions.Mappings;
+using ContentAPI.Extensions.Mappings;
 using ContentAPI.Models.Common;
 using ContentAPI.Models.SavedContent;
 using ContentAPI.Models.SavedContent.DTOs;
 using Microsoft.Extensions.Caching.Hybrid;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 
 namespace ContentAPI.Services
 {
     public class SavedContentService : ISavedContentService
     {
         private readonly ILogger<SavedContentService> _logger;
-        private readonly IHttpClientFactory _httpClientFactory;
-        private readonly HybridCache _cache;
-
-        // In-memory lagring
-        private static readonly List<SavedContent> _savedContent = Enumerable.Range(1, 10).Select(i => new SavedContent
-        {
-            Id = i,
-            Title = $"Saved Content {i}",
-            Prompt = $"This is the prompt for saved content {i}.",
-            Content = $"Initial AI Content {i}.",
-            Tone = i % 2 == 0 ? "Professional" : "Informative",
-            CreatedAt = DateTime.UtcNow.AddDays(-i),
-            UpdatedAt = DateTime.UtcNow.AddDays(-i / 2)
-        }).ToList();
+        private readonly IAiClient _aiClient;
+        private readonly ICacheClient _cache;
+        private readonly ISavedContentRepository _repository;
 
         private static int _nextId = 11;
 
         public SavedContentService(
             ILogger<SavedContentService> logger,
-            IHttpClientFactory httpClientFactory,
-            HybridCache cache)
+            IAiClient aiClient,
+            ICacheClient cache,
+            ISavedContentRepository repository)
         {
             _logger = logger;
-            _httpClientFactory = httpClientFactory;
+            _aiClient = aiClient;
             _cache = cache;
+            _repository = repository;
         }
 
-        private async Task<string> GenerateAiContentAsync(string prompt, string tone)
+        private record AiContent(string Markdown, string Headline, string[] Paragraphs, bool UncertaintyFlag);
+
+        private async Task<AiContent> GenerateAiContentAsync(string prompt, string tone)
         {
-            try
+            var rawJsonString = await _aiClient.GenerateAsync(prompt, tone);
+
+            if (string.IsNullOrWhiteSpace(rawJsonString))
             {
-                var formattedPrompt = $"answer this: {prompt} In this Tone: {tone}";
-                var client = _httpClientFactory.CreateClient("ProxyApiClient");
+                throw new HttpRequestException("The AI server returned an empty text response.", null, HttpStatusCode.BadGateway);
+            }
 
-                var response = await client.PostAsJsonAsync("api/ai/ask", formattedPrompt);
-
-                if (response.IsSuccessStatusCode)
+            var cleanJson = rawJsonString.Trim();
+            if (cleanJson.StartsWith("```"))
+            {
+                // Remove starting backticks and optional 'json' identifier
+                int firstNewLine = cleanJson.IndexOf('\n');
+                if (firstNewLine != -1)
                 {
-                    return await response.Content.ReadAsStringAsync();
+                    cleanJson = cleanJson.Substring(firstNewLine).Trim();
                 }
 
-                _logger.LogWarning("AI Service returnerade status: {StatusCode}", response.StatusCode);
-                return "Error: Kunde inte generera innehåll.";
+                // Remove ending backticks
+                if (cleanJson.EndsWith("```"))
+                {
+                    cleanJson = cleanJson.Substring(0, cleanJson.Length - 3).Trim();
+                }
             }
-            catch (Exception ex)
+
+            try
             {
-                _logger.LogError(ex, "Tekniskt fel vid kontakt med AI-tjänsten.");
-                return "Error: AI-tjänsten är otillgänglig.";
+                using var doc = JsonDocument.Parse(cleanJson);
+                var root = doc.RootElement;
+
+                bool isUncertain = root.GetProperty("uncertaintyFlag").GetBoolean();
+                var headline = root.GetProperty("headline").GetString() ?? string.Empty;
+
+                var paragraphsList = new List<string>();
+                foreach (var element in root.GetProperty("paragraphs").EnumerateArray())
+                {
+                    paragraphsList.Add(element.GetString() ?? string.Empty);
+                }
+
+                var structuredMarkdown = $"## {headline}\n\n" + string.Join("\n\n", paragraphsList);
+                return new AiContent(structuredMarkdown, headline, paragraphsList.ToArray(), isUncertain);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse structured json output format. Building fallback structured text. Cleaned text: {CleanedText}", cleanJson);
+
+                var raw = cleanJson;
+
+                var paragraphs = raw.Split(new[] { "\n\n" }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(p => p.Trim())
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .ToList();
+
+                if (paragraphs.Count == 0)
+                {
+                    paragraphs = raw.Split('\n')
+                        .Select(p => p.Trim())
+                        .Where(p => !string.IsNullOrWhiteSpace(p))
+                        .ToList();
+                }
+
+                if (paragraphs.Count == 0)
+                {
+                    var sentences = System.Text.RegularExpressions.Regex.Split(raw, "(?<=[.!?])\\s+")
+                        .Select(s => s.Trim())
+                        .Where(s => !string.IsNullOrWhiteSpace(s))
+                        .ToList();
+
+                    paragraphs = new List<string>();
+                    for (int i = 0; i < Math.Min(3, sentences.Count); i++)
+                    {
+                        paragraphs.Add(sentences[i]);
+                    }
+                }
+
+                if (paragraphs.Count > 3)
+                {
+                    paragraphs = paragraphs.Take(3).ToList();
+                }
+
+                string headline = "Generated Content";
+                if (paragraphs.Count > 0)
+                {
+                    var first = paragraphs[0];
+                    var idx = first.IndexOfAny(new[] { '.', '?', '!' });
+                    if (idx > 0)
+                    {
+                        headline = first.Substring(0, idx).Trim();
+                    }
+                    else
+                    {
+                        headline = first.Length <= 60 ? first : first.Substring(0, 57).Trim() + "...";
+                    }
+                }
+
+                bool uncertain = raw.IndexOf("uncertain", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 raw.IndexOf("i am not sure", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 raw.IndexOf("i'm not sure", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                var sb = new System.Text.StringBuilder();
+                if (uncertain)
+                {
+                    sb.AppendLine("### System Warning\nI am uncertain about this topic. The request may be outside verified knowledge scopes.\n");
+                }
+
+                sb.Append("## ").AppendLine(headline).AppendLine();
+                sb.Append(string.Join("\n\n", paragraphs));
+
+                return new AiContent(sb.ToString(), headline, paragraphs.ToArray(), uncertain);
             }
         }
 
@@ -69,8 +154,11 @@ namespace ContentAPI.Services
             return await _cache.GetOrCreateAsync(cacheKey, async token =>
             {
                 _logger.LogInformation("Cache miss för ID {Id}", id);
-                var target = _savedContent.FirstOrDefault(p => p.Id == id)
-                             ?? throw new NotFoundException($"ID {id} hittades inte.");
+                var target = await _repository.GetByIdAsync(id);
+                if (target is null)
+                {
+                    throw new NotFoundException($"ID {id} hittades inte.");
+                }
 
                 return target.ToResponse();
             });
@@ -79,12 +167,16 @@ namespace ContentAPI.Services
         public async Task<SavedContentResponse> CreateSavedContentAsync(CreateSavedContentRequest request)
         {
             var entity = request.ToEntity();
-            entity.Content = await GenerateAiContentAsync(request.Prompt, request.Tone);
-            entity.Id = _nextId++;
+            var ai = await GenerateAiContentAsync(request.Prompt, request.Tone);
+            entity.Content = ai.Markdown;
+            entity.Headline = ai.Headline;
+            entity.Paragraphs = ai.Paragraphs;
+            entity.UncertaintyFlag = ai.UncertaintyFlag;
+            entity.Id = System.Threading.Interlocked.Increment(ref _nextId);
             entity.CreatedAt = DateTime.UtcNow;
             entity.UpdatedAt = DateTime.UtcNow;
 
-            _savedContent.Add(entity);
+            await _repository.AddAsync(entity);
 
             await _cache.RemoveByTagAsync("content-list");
 
@@ -93,21 +185,32 @@ namespace ContentAPI.Services
 
         public async Task<bool> UpdateSavedContentAsync(int id, UpdateSavedContentRequest request)
         {
-            var target = _savedContent.FirstOrDefault(p => p.Id == id)
-                         ?? throw new NotFoundException($"ID {id} hittades inte.");
+            var existing = await _repository.GetByIdAsync(id) ?? throw new NotFoundException($"ID {id} hittades inte.");
 
-            bool needsNewAiContent = (request.Prompt != null && request.Prompt != target.Prompt) ||
-                                     (request.Tone != null && request.Tone != target.Tone);
+            bool needsNewAiContent = (request.Prompt != null && request.Prompt != existing.Prompt) ||
+                                     (request.Tone != null && request.Tone != existing.Tone);
 
-            target.Title = request.Title ?? target.Title;
-            target.Prompt = request.Prompt ?? target.Prompt;
-            target.Tone = request.Tone ?? target.Tone;
-            target.UpdatedAt = DateTime.UtcNow;
+            var updated = new SavedContent
+            {
+                Id = existing.Id,
+                Title = request.Title ?? existing.Title,
+                Prompt = request.Prompt ?? existing.Prompt,
+                Tone = request.Tone ?? existing.Tone,
+                Content = existing.Content,
+                CreatedAt = existing.CreatedAt,
+                UpdatedAt = DateTime.UtcNow
+            };
 
             if (needsNewAiContent)
             {
-                target.Content = await GenerateAiContentAsync(target.Prompt, target.Tone);
+                var ai = await GenerateAiContentAsync(updated.Prompt, updated.Tone);
+                updated.Content = ai.Markdown;
+                updated.Headline = ai.Headline;
+                updated.Paragraphs = ai.Paragraphs;
+                updated.UncertaintyFlag = ai.UncertaintyFlag;
             }
+
+            await _repository.UpdateAsync(updated);
 
             await _cache.RemoveAsync($"content:{id}");
             await _cache.RemoveByTagAsync("content-list");
@@ -117,10 +220,11 @@ namespace ContentAPI.Services
 
         public async Task<bool> DeleteSavedContentAsync(int id)
         {
-            var target = _savedContent.FirstOrDefault(p => p.Id == id)
-                ?? throw new NotFoundException($"ID {id} hittades inte.");
-
-            _savedContent.Remove(target);
+            var deleted = await _repository.DeleteAsync(id);
+            if (!deleted)
+            {
+                throw new NotFoundException($"ID {id} hittades inte.");
+            }
 
             await _cache.RemoveAsync($"content:{id}");
             await _cache.RemoveByTagAsync("content-list");
@@ -136,7 +240,8 @@ namespace ContentAPI.Services
             {
                 _logger.LogInformation("Genererar nytt paginerat svar för cache...");
 
-                var query = _savedContent.ToList().AsQueryable();
+                var all = await _repository.GetAllAsync();
+                var query = all.ToList().AsQueryable();
 
                 // Filtrering
                 if (filter.CreatedAt.HasValue)

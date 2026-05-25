@@ -1,6 +1,6 @@
 ﻿using ContentAPI.Middlewares;
 
-namespace ContentAPI.Extentions
+namespace ContentAPI.Extensions
 {
     public static class CustomExceptionHandlerMiddlewareExtensions
     {
